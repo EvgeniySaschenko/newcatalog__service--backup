@@ -14,6 +14,15 @@ let processStatus = null;
 // The last countdown will be stored until the first request
 let reportLast = null;
 
+function setBackupErrorStatus(error) {
+  processStatus = 'error';
+  reportLast = { error: error.stack };
+};
+
+function toggleBlockAcces(isBlock) {
+  isBlockAccess = isBlock;
+};
+
 let app = express()
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -22,7 +31,7 @@ process.on('uncaughtException', async function (error) {
   let report = new Report(variables);
   // The report will be available on the host machine (via volume)
   await report.createReportError({ error, reportPath: variables.reportErrorPath });
-  process.exit(1);
+  setBackupErrorStatus(error);
 });
 
 // Check access to the server
@@ -59,7 +68,7 @@ app.get('/report', async (request, response) => {
 
 // Create backup
 app.post('/backup', async (request, response) => {
-  isBlockAccess = true;
+  toggleBlockAcces(true);
   // Sending occurs without waiting for the results
   response.send(true);
   try {
@@ -74,19 +83,18 @@ app.post('/backup', async (request, response) => {
     await backupSsh.sendBackup(request.body);
     processStatus = 'completed';
   } catch(error) {
-    processStatus = 'error';
-    reportLast = { error: error.stack };
+    setBackupErrorStatus(error);
   } finally {
-    isBlockAccess = false;
+    toggleBlockAcces(false);
   }
 });
 
 // Set settings for ssh backup
 app.post('/settings-backup-ssh', async (request, response) => {
-  isBlockAccess = true;
+  toggleBlockAcces(true);
   let backupSsh = new BackupSsh(variables);
   let { publicKey } = await backupSsh.setSettings(request.body);
-  isBlockAccess = false;
+  toggleBlockAcces(false);
   response.send({ publicKey });
 });
 
@@ -97,9 +105,12 @@ app.use(function (request, response, next) {
 
 // Error handler
 app.use(function (error, request, response, next) {
-  isBlockAccess = false;
+  // /backup
+  setBackupErrorStatus(error);
+  // oher request
+  toggleBlockAcces(false);
   response.status(500);
-  response.send(reportLast);
+  response.send({ error: error.stack });
 });
 
 // Start server
