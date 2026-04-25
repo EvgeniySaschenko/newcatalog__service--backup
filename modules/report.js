@@ -5,19 +5,35 @@ let path = require('node:path');
 
 class Report {
   constructor({ backup }) {
-    for(let key in this.backup) {
+    for (let key in this.backup) {
       this.backup[key] = backup[key];
     }
   }
 
-  backup = {  
+  backup = {
     rootDir: '',
     dbDir: '',
     reportPath: '',
+  };
+
+  // Create report restore
+  async createReportRestore({ restoreStart, restoreEnd }) {
+    let data = JSON.parse(await fs.promises.readFile(this.backup.reportPath, 'utf8'));
+    return {
+      backupId: data.backupId,
+      restoreStart,
+      restoreEnd,
+    };
   }
 
-  // Create report
-  async createReport({ databaseStart, databaseEnd, storageFilesStart, storageFilesEnd, backupId }) {
+  // Create report backup
+  async createReportBackup({
+    databaseStart,
+    databaseEnd,
+    storageFilesStart,
+    storageFilesEnd,
+    backupId,
+  }) {
     let reportStart = new Date().toISOString();
     let dbFilesPaths = await fs.promises.readdir(this.backup.dbDir);
     await this.getDirInfo(this.backup.rootDir);
@@ -27,14 +43,14 @@ class Report {
       paths: {},
     };
     // database files info
-    for await(let filePath of dbFilesPaths) {
+    for await (let filePath of dbFilesPaths) {
       let fullFilePath = `${this.backup.dbDir}/${filePath}`;
       data.paths[fullFilePath] = await this.getFileInfo(fullFilePath);
     }
 
     // files storage info
     let dirList = await this.createDirList(this.backup.rootDir);
-    for await(let dirPath of dirList) {
+    for await (let dirPath of dirList) {
       data.paths[dirPath] = await this.getDirInfo(dirPath);
     }
     let reportEnd = new Date().toISOString();
@@ -51,20 +67,20 @@ class Report {
       report: {
         dateStart: reportStart,
         dateEnd: reportEnd,
-      }
+      },
     });
 
     await fs.promises.writeFile(this.backup.reportPath, JSON.stringify(data, null, 2), 'utf8');
-    console.log("--> Report completed");
+    console.log('--> Report completed');
     return data;
   }
-  
+
   // Create report with error
   async createReportError({ error, reportPath }) {
     console.error(error);
     let data = { error: error.message, stack: error.stack, date: new Date().toISOString() };
     await fs.promises.writeFile(reportPath, JSON.stringify(data, null, 2), 'utf8');
-    console.log("--> Report with error completed");
+    console.log('--> Report with error completed');
     return data;
   }
 
@@ -76,10 +92,10 @@ class Report {
     let fileStream = fs.createReadStream(filePath);
     try {
       await stream.pipeline(fileStream, hash);
-      return { 
-        sha256: hash.digest('hex'), 
+      return {
+        sha256: hash.digest('hex'),
         'size-bytes': stat.size,
-        'size-mb': (stat.size / (1024 * 1000)).toFixed(2)
+        'size-mb': (stat.size / (1024 * 1000)).toFixed(2),
       };
     } catch (error) {
       Object.assign(error, { source: `${fnName} (${filePath})` });
@@ -108,11 +124,11 @@ class Report {
     }
 
     let info = {
-      file: countFiles, 
-      directory: countDirs, 
+      file: countFiles,
+      directory: countDirs,
       symlink: countSimlink,
-      'size-files-bytes': sizeFiles, 
-      'size-files-mb': (sizeFiles / (1024 * 1000)).toFixed(2) 
+      'size-files-bytes': sizeFiles,
+      'size-files-mb': (sizeFiles / (1024 * 1000)).toFixed(2),
     };
 
     return info;
