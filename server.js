@@ -1,4 +1,4 @@
-let express = require('express')
+let express = require('express');
 let variables = require('./modules/variables');
 let Backup = require('./modules/backup');
 let Report = require('./modules/report');
@@ -15,15 +15,16 @@ let processStatus = null;
 let reportLast = null;
 
 function setBackupErrorStatus(error) {
+  console.log('--> Error', error);
   processStatus = 'error';
-  reportLast = { error: error.stack };
-};
+  reportLast = { error: error.stack || error.message || error };
+}
 
 function toggleBlockAcces(isBlock) {
   isBlockAccess = isBlock;
-};
+}
 
-let app = express()
+let app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -32,16 +33,6 @@ process.on('uncaughtException', async function (error) {
   // The report will be available on the host machine (via volume)
   await report.createReportError({ error, reportPath: variables.reportErrorPath });
   setBackupErrorStatus(error);
-});
-
-// Check access to the server
-app.use(async (request, response, next) => {
-  if (isBlockAccess) {
-    response.status(202);
-    response.send({ processStatus });
-  } else {
-    next();
-  }
 });
 
 // Check secret key for communication between services
@@ -66,6 +57,16 @@ app.get('/report', async (request, response) => {
   processStatus = null;
 });
 
+// Check access to the server
+app.use(async (request, response, next) => {
+  if (isBlockAccess) {
+    response.status(202);
+    response.send({ processStatus });
+  } else {
+    next();
+  }
+});
+
 // Create backup
 app.post('/backup', async (request, response) => {
   toggleBlockAcces(true);
@@ -77,12 +78,39 @@ app.post('/backup', async (request, response) => {
     let backup = new Backup(variables);
     let resultBackup = await backup.createBackup();
     let report = new Report(variables);
-    let backupId = request.body.backupId;
-    reportLast = await report.createReport({ resultBackup, backupId });
+    let { backupId } = request.body;
+    reportLast = await report.createReportBackup({ resultBackup, backupId });
     processStatus = 'send';
     await backupSsh.sendBackup(request.body);
     processStatus = 'completed';
-  } catch(error) {
+  } catch (error) {
+    setBackupErrorStatus(error);
+  } finally {
+    toggleBlockAcces(false);
+  }
+});
+
+// Restore backup
+app.post('/restore', async (request, response) => {
+  toggleBlockAcces(true);
+  // Sending occurs without waiting for the results
+  response.send(true);
+  try {
+    let { remoteDirPath } = request.body;
+    let backupSsh = new BackupSsh(variables);
+    await backupSsh.checkConnection();
+    await backupSsh.downloadBackup({ remoteDirPath });
+    processStatus = 'restore';
+    // The delay is needed to allow the API service to block.
+    await new Promise((resolve, reject) => {
+      setTimeout(() => resolve(), 5000);
+    });
+    let backup = new Backup(variables);
+    let resultRestore = await backup.restoreBackup();
+    let report = new Report(variables);
+    reportLast = await report.createReportRestore(resultRestore);
+    processStatus = 'completed';
+  } catch (error) {
     setBackupErrorStatus(error);
   } finally {
     toggleBlockAcces(false);
@@ -90,7 +118,7 @@ app.post('/backup', async (request, response) => {
 });
 
 // Set settings for ssh backup
-app.post('/settings-backup-ssh', async (request, response) => {
+app.post('/settings', async (request, response) => {
   toggleBlockAcces(true);
   let backupSsh = new BackupSsh(variables);
   let { publicKey } = await backupSsh.setSettings(request.body);
@@ -117,4 +145,3 @@ app.use(function (error, request, response, next) {
 app.listen(port, () => {
   console.log(`Backup server is running on http://${host}:${port}`);
 });
-

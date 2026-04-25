@@ -1,0 +1,14 @@
+{
+  "eslint.validate": ["javascript"],
+  // Форматировать при сохранении
+  "editor.formatOnSave": true,
+  // Расшырение для форматирования
+  "editor.defaultFormatter": "dbaeumer.vscode-eslint",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  // Размер отступа
+  "editor.tabSize": 2,
+  // Использовать пробелы
+  "editor.insertSpaces": true,
+}

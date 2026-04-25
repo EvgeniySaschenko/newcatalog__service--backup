@@ -1,34 +1,34 @@
 let Ssh2SftpClient = require('ssh2-sftp-client');
 let fs = require('node:fs');
-let child_process = require('node:child_process');
+let { $utils } = require('./utils');
 
 class BackupSsh {
   constructor({ backup, backupSsh }) {
-    for(let key in this.backup) {
+    for (let key in this.backup) {
       this.backup[key] = backup[key];
     }
-    for(let key in this.backupSsh) {
+    for (let key in this.backupSsh) {
       this.backupSsh[key] = backupSsh[key];
     }
   }
 
   backup = {
     rootDir: '',
-  }
+  };
 
   backupSsh = {
     rootDir: '',
     settingsPath: '',
     privateKeyPath: '',
-    publikKeyPath: '',
-  }
+    publicKeyPath: '',
+  };
   // Set backup SSH settings
   async setSettings({ host, port, username, remoteDir, publicKey, keyAlgorithm }) {
-    await this.createDir(this.backupSsh.rootDir);
+    await $utils.createDir(this.backupSsh.rootDir);
     if (!publicKey) {
-      await this.removeFile(this.backupSsh.privateKeyPath);
-      await this.removeFile(this.backupSsh.publikKeyPath);
-      await this.createSshKeys({ 
+      await $utils.removeFile(this.backupSsh.privateKeyPath);
+      await $utils.removeFile(this.backupSsh.publicKeyPath);
+      await this.createSshKeys({
         keyAlgorithm,
         keyPath: this.backupSsh.privateKeyPath,
       });
@@ -43,7 +43,7 @@ class BackupSsh {
   // Get settings
   async getSettings() {
     let privateKey = await fs.promises.readFile(this.backupSsh.privateKeyPath, 'utf8');
-    let publicKey = await fs.promises.readFile(this.backupSsh.publikKeyPath, 'utf8');
+    let publicKey = await fs.promises.readFile(this.backupSsh.publicKeyPath, 'utf8');
     let settings = JSON.parse(await fs.promises.readFile(this.backupSsh.settingsPath, 'utf8'));
     return { publicKey, privateKey, ...settings };
   }
@@ -54,15 +54,37 @@ class BackupSsh {
     let { host, port, username, privateKey, remoteDir } = await this.getSettings();
     let sftp = new Ssh2SftpClient();
     try {
-      await sftp.connect({ host, port, username, privateKey });
-      console.log('--> Start send backup');
+      await sftp.connect({ host, port, username, privateKey, readyTimeout: 20000 });
+      console.log('--> Start upload backup');
       // Upload backup files
       await sftp.uploadDir(this.backup.rootDir, `${remoteDir}/${dateCreate}_${backupId}`);
-      console.log('--> End send backup');
+      console.log('--> End upload backup');
       let endTransport = new Date().toISOString();
       return { dateStart: startTransport, dateEnd: endTransport };
-    } catch (error) {
-      throw error;
+    } finally {
+      await sftp.end();
+    }
+  }
+
+  // Download a backup from a remote server via SSH (srcFullPath - path to the folder on the remote server)
+  async downloadBackup({ remoteDirPath }) {
+    let startTransport = new Date().toISOString();
+    let { host, port, username, privateKey } = await this.getSettings();
+    let sftp = new Ssh2SftpClient();
+    try {
+      await sftp.connect({ host, port, username, privateKey, readyTimeout: 20000 });
+      let isExist = await sftp.exists(remoteDirPath);
+      if (!isExist) {
+        throw new Error(`The path does not exist on the remote server: ${remoteDirPath}`);
+      }
+      await $utils.removeDir(this.backup.rootDir);
+      await $utils.createDir(this.backup.rootDir);
+      console.log('--> Start download backup');
+      // Download backup files
+      await sftp.downloadDir(remoteDirPath, this.backup.rootDir);
+      console.log('--> End download backup');
+      let endTransport = new Date().toISOString();
+      return { dateStart: startTransport, dateEnd: endTransport };
     } finally {
       await sftp.end();
     }
@@ -73,10 +95,8 @@ class BackupSsh {
     let { host, port, username, privateKey } = await this.getSettings();
     let sftp = new Ssh2SftpClient();
     try {
-      await sftp.connect({ host, port, username, privateKey });
+      await sftp.connect({ host, port, username, privateKey, readyTimeout: 20000 });
       console.log('--> Check connection to SSH server successful');
-    } catch (error) {
-      throw error;
     } finally {
       sftp.end();
     }
@@ -84,63 +104,10 @@ class BackupSsh {
 
   // Create ssh keys
   async createSshKeys({ keyAlgorithm, keyPath }) {
-    let fnName = 'createSshKeys';
-    let keygen = child_process.spawn('ssh-keygen', [
-      '-t', keyAlgorithm,
-      '-f', keyPath,
-      '-P', '',
-      '-N', '',
-    ]);
-
-    await new Promise((resolve, reject) => {
-      keygen.stderr.once('data', (data) => {
-        let error = Object.assign({ error: data.toString() }, { source: `stderr (${fnName})` });
-        reject(error);
-      });
-
-      keygen.once('close', (code) => {
-        if (code) {
-          let error = new Error(`${fnName} code: ${code}`);
-          reject(error);
-        }
-        resolve();
-      });
+    await $utils.runCommandSpawn({
+      command: 'ssh-keygen',
+      args: ['-t', keyAlgorithm, '-f', keyPath, '-P', '', '-N', ''],
     });
-  }
-
-  // Check exist dir
-  async isExistPath(curentPath) {
-    try {
-      await fs.promises.stat(curentPath);
-      return true;
-    } catch (error) {
-      if (error.code === 'ENOENT') return false;
-      throw error;
-    }
-  }
-
-  // Remove file
-  async removeFile(filePath) {
-    let isExist = await this.isExistPath(filePath);
-    if (!isExist) return;
-    await fs.promises.unlink(filePath);
-    console.log(`--> File removed "${filePath}"`);
-  }
-
-  // Create dir
-  async createDir(dirPath) {
-    let isExist = await this.isExistPath(dirPath);
-    if (isExist) return;
-    await fs.promises.mkdir(dirPath, { recursive: true });
-    console.log(`--> Directory created "${dirPath}"`);
-  }
-
-  // Remove dir with all content
-  async removeDir(dirPath) {
-    let isExist = await this.isExistPath(dirPath);
-    if (!isExist) return;
-    await fs.promises.rm(dirPath, { recursive: true });
-    console.log(`--> Directory removed "${dirPath}"`);
   }
 }
 

@@ -1,8 +1,4 @@
-let { 
-  FILES__STORAGE_MOUNT_DIR,
-  FILES__STORAGE,
-  APP_DIR,
-} = process.env
+let { FILES__STORAGE_MOUNT_DIR, FILES__STORAGE, APP_DIR } = process.env;
 
 let backupRootDir = '/app-backup';
 let dbDir = `${backupRootDir}/database`;
@@ -10,7 +6,10 @@ let backupSshRootDir = '/app-backup-ssh';
 
 module.exports = {
   reportErrorPath: `${APP_DIR}/error.json`,
-  storageFilesDir: FILES__STORAGE_MOUNT_DIR,
+  storage: {
+    filesDir: FILES__STORAGE_MOUNT_DIR,
+    filesDirOld: `${FILES__STORAGE_MOUNT_DIR}/files-old`,
+  },
   backup: {
     rootDir: backupRootDir,
     storageFilesDir: `${backupRootDir}/${FILES__STORAGE}`,
@@ -24,6 +23,6 @@ module.exports = {
     rootDir: backupSshRootDir,
     settingsPath: `${backupSshRootDir}/settings.json`,
     privateKeyPath: `${backupSshRootDir}/ssh_key`,
-    publikKeyPath: `${backupSshRootDir}/ssh_key.pub`,
-  }
-}; 
+    publicKeyPath: `${backupSshRootDir}/ssh_key.pub`,
+  },
+};
